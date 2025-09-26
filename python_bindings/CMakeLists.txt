@@ -67,6 +67,8 @@ set_target_properties(orb_slam3_python PROPERTIES
     PREFIX ""
     SUFFIX ".so"
     POSITION_INDEPENDENT_CODE ON
+    OUTPUT_NAME "orb_slam3_python"
+    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
 # Link libraries
