@@ -914,7 +914,16 @@ class ORBSLAMSystem:
             # ctypeslib.as_array创建数组视图，避免数据复制
             points_array = np.ctypeslib.as_array(map_points.points, shape=(map_points.num_points,))
             # 提取x,y,z坐标并组织成numpy数组
-            result = np.array([(p.x, p.y, p.z) for p in points_array])
+            try:
+                # 统一使用numpy结构化数组的访问方式
+                result = np.array([(p['x'], p['y'], p['z']) for p in points_array])
+            except (KeyError, TypeError):
+                # 如果结构化访问失败，尝试属性访问
+                try:
+                    result = np.array([(p.x, p.y, p.z) for p in points_array])
+                except Exception as e:
+                    print(f"警告：无法提取地图点坐标，错误: {e}")
+                    result = np.array([])
             
             # 释放C++分配的内存，防止内存泄漏
             _lib.orb_slam3_free_map_points(ctypes.byref(map_points))
@@ -981,14 +990,30 @@ class ORBSLAMSystem:
             kps_array = np.ctypeslib.as_array(keypoints.keypoints, shape=(keypoints.num_keypoints,))
             result = []
             for kp in kps_array:
-                # 将每个C结构体转换为Python字典
-                result.append({
-                    'x': kp.x,              # X像素坐标
-                    'y': kp.y,              # Y像素坐标
-                    'angle': kp.angle,      # 主方向角度
-                    'response': kp.response, # 特征响应强度
-                    'octave': kp.octave     # 金字塔层级
-                })
+                try:
+                    # 统一使用numpy结构化数组的访问方式
+                    # 这种方式对numpy.void和其他类型都有效
+                    result.append({
+                        'x': float(kp['x']),              # X像素坐标
+                        'y': float(kp['y']),              # Y像素坐标
+                        'angle': float(kp['angle']),      # 主方向角度
+                        'response': float(kp['response']), # 特征响应强度
+                        'octave': int(kp['octave'])       # 金字塔层级
+                    })
+                except Exception as e:
+                    # 如果单个关键点处理失败，尝试属性访问作为后备方案
+                    try:
+                        result.append({
+                            'x': float(kp.x),              # X像素坐标
+                            'y': float(kp.y),              # Y像素坐标
+                            'angle': float(kp.angle),      # 主方向角度
+                            'response': float(kp.response), # 特征响应强度
+                            'octave': int(kp.octave)       # 金字塔层级
+                        })
+                    except Exception as e2:
+                        # 如果两种方式都失败，跳过这个关键点
+                        print(f"警告：跳过一个无效的关键点，错误: {e} -> {e2}")
+                        continue
             
             # 释放C++分配的内存，防止内存泄漏
             _lib.orb_slam3_free_keypoints(ctypes.byref(keypoints))

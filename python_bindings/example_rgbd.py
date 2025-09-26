@@ -347,16 +347,31 @@ def main():
                 
                 # ===== 获取关键点信息 =====
                 # 关键点是当前帧中检测到的2D特征点
-                keypoints = slam.get_tracked_keypoints()
-                if len(keypoints) > 0:
-                    print(f"  检测到 {len(keypoints)} 个关键点")
+                try:
+                    keypoints = slam.get_tracked_keypoints()
+                    if keypoints and len(keypoints) > 0:
+                        print(f"  检测到 {len(keypoints)} 个关键点")
+                except Exception as e:
+                    print(f"  获取关键点时发生错误: {e}")
+                    keypoints = []
                 
             except Exception as e:
                 print(f"跟踪过程中发生错误: {e}")
+                print(f"错误类型: {type(e).__name__}")
                 print("这可能是由于：")
                 print("1. 输入图像格式不正确")
                 print("2. 系统配置参数有误")
                 print("3. 内存不足")
+                print("4. ORB-SLAM3 Python绑定版本不兼容")
+                
+                # 添加调试信息
+                if 'void' in str(e):
+                    print("调试信息：检测到numpy.void错误，这通常是由于数据结构转换问题")
+                    print("建议：")
+                    print("- 检查ORB-SLAM3 Python绑定的版本")
+                    print("- 验证编译时使用的numpy版本")
+                    print("- 尝试重新编译Python绑定")
+                
                 break
             
             # ===== 图像显示和用户交互 =====
@@ -368,8 +383,22 @@ def main():
                 # 关键点显示为绿色圆点，有助于直观了解特征检测效果
                 keypoints = slam.get_tracked_keypoints()
                 for kp in keypoints:
-                    # 在关键点位置绘制半径为2的绿色圆点
-                    cv2.circle(display_frame, (int(kp['x']), int(kp['y'])), 2, (0, 255, 0), -1)
+                    try:
+                        # 检查关键点数据类型并安全访问
+                        if isinstance(kp, dict):
+                            # 字典格式：直接访问键值
+                            x, y = int(kp['x']), int(kp['y'])
+                        elif hasattr(kp, 'x') and hasattr(kp, 'y'):
+                            # 结构体格式：访问属性
+                            x, y = int(kp.x), int(kp.y)
+                        else:
+                            # 其他格式：跳过
+                            continue
+                        # 在关键点位置绘制半径为2的绿色圆点
+                        cv2.circle(display_frame, (x, y), 2, (0, 255, 0), -1)
+                    except (AttributeError, KeyError, TypeError) as e:
+                        # 如果数据格式不正确，跳过这个关键点
+                        continue
                 
                 # 显示图像窗口
                 cv2.imshow('ORB-SLAM3 RGB-D实时跟踪', display_frame)
