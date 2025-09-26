@@ -50,44 +50,8 @@ find_library(DBoW2_LIBRARY
     NO_DEFAULT_PATH
 )
 
-find_library(G2O_CORE_LIBRARY
-    NAMES g2o_core
-    PATHS ${ORB_SLAM3_ROOT_DIR}/Thirdparty/g2o/lib
-    NO_DEFAULT_PATH
-)
-
-find_library(G2O_SOLVER_DENSE_LIBRARY
-    NAMES g2o_solver_dense
-    PATHS ${ORB_SLAM3_ROOT_DIR}/Thirdparty/g2o/lib
-    NO_DEFAULT_PATH
-)
-
-find_library(G2O_SOLVER_EIGEN_LIBRARY
-    NAMES g2o_solver_eigen
-    PATHS ${ORB_SLAM3_ROOT_DIR}/Thirdparty/g2o/lib
-    NO_DEFAULT_PATH
-)
-
-find_library(G2O_STUFF_LIBRARY
-    NAMES g2o_stuff
-    PATHS ${ORB_SLAM3_ROOT_DIR}/Thirdparty/g2o/lib
-    NO_DEFAULT_PATH
-)
-
-find_library(G2O_TYPES_SBA_LIBRARY
-    NAMES g2o_types_sba
-    PATHS ${ORB_SLAM3_ROOT_DIR}/Thirdparty/g2o/lib
-    NO_DEFAULT_PATH
-)
-
-find_library(G2O_TYPES_SIM3_LIBRARY
-    NAMES g2o_types_sim3
-    PATHS ${ORB_SLAM3_ROOT_DIR}/Thirdparty/g2o/lib
-    NO_DEFAULT_PATH
-)
-
-find_library(G2O_TYPES_SLAM3D_LIBRARY
-    NAMES g2o_types_slam3d
+find_library(G2O_LIBRARY
+    NAMES g2o
     PATHS ${ORB_SLAM3_ROOT_DIR}/Thirdparty/g2o/lib
     NO_DEFAULT_PATH
 )
@@ -111,17 +75,13 @@ target_link_libraries(orb_slam3_python
     ${EIGEN3_LIBS}
     ${Pangolin_LIBRARIES}
     ${DBoW2_LIBRARY}
-    ${G2O_CORE_LIBRARY}
-    ${G2O_SOLVER_DENSE_LIBRARY}
-    ${G2O_SOLVER_EIGEN_LIBRARY}
-    ${G2O_STUFF_LIBRARY}
-    ${G2O_TYPES_SBA_LIBRARY}
-    ${G2O_TYPES_SIM3_LIBRARY}
-    ${G2O_TYPES_SLAM3D_LIBRARY}
+    ${G2O_LIBRARY}
     GL
     GLU
     GLEW
     pthread
+    -lboost_serialization
+    -lcrypto
 )
 
 # Compiler-specific options
