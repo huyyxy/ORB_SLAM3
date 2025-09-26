@@ -35,8 +35,8 @@ python example_rgbd.py --vocab path/to/ORBvoc.txt --settings path/to/settings.ya
 # 禁用可视化界面（适合服务器环境）
 python example_rgbd.py --vocab path/to/ORBvoc.txt --settings path/to/settings.yaml --no-viewer
 
-# 使用数据集（需要实现数据集加载逻辑）
-python example_rgbd.py --vocab path/to/ORBvoc.txt --settings path/to/settings.yaml --dataset path/to/dataset
+# 使用TUM RGB-D数据集
+python example_rgbd.py --vocab path/to/ORBvoc.txt --settings path/to/settings.yaml --dataset rgbd_dataset_freiburg1_xyz
 
 == 依赖要求 ==
 - Python 3.6+
@@ -64,6 +64,80 @@ import cv2             # OpenCV库，用于图像处理和相机操作
 import time            # 用于时间戳和帧率控制
 import argparse        # 用于命令行参数解析
 from orb_slam3_python import ORBSLAMSystem, SensorType, TrackingState  # ORB-SLAM3 Python绑定
+
+def load_tum_dataset(dataset_path):
+    """
+    加载TUM RGB-D数据集
+    
+    参数：
+        dataset_path: 数据集根目录路径
+        
+    返回：
+        rgb_files: RGB图像文件路径列表
+        depth_files: 深度图像文件路径列表 
+        timestamps: 时间戳列表
+    """
+    import os
+    
+    rgb_file = os.path.join(dataset_path, 'rgb.txt')
+    depth_file = os.path.join(dataset_path, 'depth.txt')
+    
+    print(f"正在加载TUM数据集: {dataset_path}")
+    
+    # 读取RGB图像列表
+    rgb_data = {}
+    with open(rgb_file, 'r') as f:
+        for line in f:
+            if line.startswith('#'):
+                continue
+            parts = line.strip().split()
+            if len(parts) >= 2:
+                timestamp = float(parts[0])
+                filename = parts[1]
+                rgb_data[timestamp] = os.path.join(dataset_path, filename)
+    
+    # 读取深度图像列表
+    depth_data = {}
+    with open(depth_file, 'r') as f:
+        for line in f:
+            if line.startswith('#'):
+                continue
+            parts = line.strip().split()
+            if len(parts) >= 2:
+                timestamp = float(parts[0])
+                filename = parts[1]
+                depth_data[timestamp] = os.path.join(dataset_path, filename)
+    
+    print(f"RGB图像数量: {len(rgb_data)}")
+    print(f"深度图像数量: {len(depth_data)}")
+    
+    # 关联RGB和深度图像（选择时间戳最接近的配对）
+    rgb_files = []
+    depth_files = []
+    timestamps = []
+    
+    max_time_diff = 0.02  # 最大时间差20ms
+    
+    for rgb_timestamp in sorted(rgb_data.keys()):
+        # 找到最接近的深度图像时间戳
+        best_depth_timestamp = None
+        min_diff = float('inf')
+        
+        for depth_timestamp in depth_data.keys():
+            diff = abs(rgb_timestamp - depth_timestamp)
+            if diff < min_diff:
+                min_diff = diff
+                best_depth_timestamp = depth_timestamp
+        
+        # 如果时间差在允许范围内，则添加这一对图像
+        if best_depth_timestamp is not None and min_diff < max_time_diff:
+            rgb_files.append(rgb_data[rgb_timestamp])
+            depth_files.append(depth_data[best_depth_timestamp])
+            timestamps.append(rgb_timestamp)
+    
+    print(f"成功关联的图像对数量: {len(rgb_files)}")
+    
+    return rgb_files, depth_files, timestamps
 
 def main():
     """
@@ -124,11 +198,16 @@ def main():
     # 初始化数据源：相机或数据集
     if args.dataset:
         # 使用数据集模式
-        # 注意：这里是占位符，实际使用时需要实现数据集加载逻辑
         print(f"使用数据集模式: {args.dataset}")
-        print("提示：数据集模式需要您实现相应的数据加载逻辑")
-        print("常见的RGB-D数据集格式包括TUM、NYU Depth等")
-        cap = None
+        try:
+            rgb_files, depth_files, timestamps = load_tum_dataset(args.dataset)
+            cap = None
+            dataset_frame_id = 0
+            print("数据集加载成功！")
+        except Exception as e:
+            print(f"数据集加载失败: {e}")
+            print("请检查数据集路径和格式是否正确")
+            return
     else:
         # 使用实时相机模式
         print(f"正在打开相机设备 {args.camera}...")
@@ -185,19 +264,46 @@ def main():
                 depth_frame = np.ones((rgb_frame.shape[0], rgb_frame.shape[1]), dtype=np.float32) * 1000.0
                 print("警告：正在使用虚拟深度数据！实际应用中请使用真实深度传感器数据")
                 
+                # 生成时间戳
+                timestamp = time.time()
+                
             else:
                 # ===== 从数据集读取数据 =====
-                # 这是数据集模式的占位符
-                # 实际实现时，您需要：
-                # 1. 解析数据集的目录结构
-                # 2. 按时间戳顺序读取RGB和深度图像
-                # 3. 加载相机内参和外参
-                print("数据集模式尚未实现，请先实现数据集加载逻辑")
-                break
-            
-            # 生成时间戳
-            # 时间戳用于SLAM系统的时序处理和数据关联
-            timestamp = time.time()
+                if dataset_frame_id >= len(rgb_files):
+                    print("数据集处理完成！")
+                    break
+                
+                # 读取当前帧的RGB和深度图像
+                rgb_path = rgb_files[dataset_frame_id]
+                depth_path = depth_files[dataset_frame_id]
+                timestamp = timestamps[dataset_frame_id]
+                
+                print(f"处理第 {dataset_frame_id + 1}/{len(rgb_files)} 帧")
+                print(f"  RGB: {rgb_path}")
+                print(f"  深度: {depth_path}")
+                
+                # 加载RGB图像
+                rgb_frame = cv2.imread(rgb_path, cv2.IMREAD_COLOR)
+                if rgb_frame is None:
+                    print(f"无法加载RGB图像: {rgb_path}")
+                    dataset_frame_id += 1
+                    continue
+                
+                # 颜色空间转换：OpenCV加载的是BGR格式，转换为RGB
+                rgb_frame = cv2.cvtColor(rgb_frame, cv2.COLOR_BGR2RGB)
+                
+                # 加载深度图像
+                depth_frame = cv2.imread(depth_path, cv2.IMREAD_ANYDEPTH)
+                if depth_frame is None:
+                    print(f"无法加载深度图像: {depth_path}")
+                    dataset_frame_id += 1
+                    continue
+                
+                # TUM数据集的深度图像是16位，深度值以毫米为单位，需要转换为米
+                # 同时转换为float32格式
+                depth_frame = depth_frame.astype(np.float32) / 1000.0
+                
+                dataset_frame_id += 1
             
             # ===== 执行SLAM跟踪 =====
             try:
