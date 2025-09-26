@@ -57,10 +57,10 @@ def load_orb_slam3_library():
     # .dylib: macOS动态库文件扩展名  
     # .dll: Windows动态库文件扩展名
     lib_names = [
-        'orb_slam3_python.so',       # Linux标准格式
-        'liborb_slam3_python.so',    # Linux带lib前缀格式
-        'orb_slam3_python.dylib',    # macOS格式
-        'orb_slam3_python.dll'       # Windows格式
+        '_orb_slam3_python.so',       # Linux标准格式
+        'lib_orb_slam3_python.so',    # Linux带lib前缀格式
+        '_orb_slam3_python.dylib',    # macOS格式
+        '_orb_slam3_python.dll'       # Windows格式
     ]
     
     # 遍历所有可能的库文件名
