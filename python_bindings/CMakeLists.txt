@@ -15,11 +15,12 @@ set(ORB_SLAM3_ROOT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
 # Include directories
 include_directories(
+    ${ORB_SLAM3_ROOT_DIR}
     ${ORB_SLAM3_ROOT_DIR}/include
     ${ORB_SLAM3_ROOT_DIR}/include/CameraModels
     ${ORB_SLAM3_ROOT_DIR}/Thirdparty/Sophus
     ${ORB_SLAM3_ROOT_DIR}/Thirdparty/g2o/g2o
-    ${ORB_SLAM3_ROOT_DIR}/Thirdparty/DBoW2/include
+    ${ORB_SLAM3_ROOT_DIR}/Thirdparty/DBoW2
     ${OpenCV_INCLUDE_DIRS}
     ${EIGEN3_INCLUDE_DIR}
     ${Pangolin_INCLUDE_DIRS}
