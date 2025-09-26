@@ -32,12 +32,19 @@ cmake .. \
 echo "Building..."
 make -j$(nproc)
 
-# Copy the library to the bindings directory
-if [ -f "orb_slam3_python.so" ]; then
+# Check if the library was built successfully
+# The library should be in the python_bindings directory due to LIBRARY_OUTPUT_DIRECTORY setting
+if [ -f "$SCRIPT_DIR/orb_slam3_python.so" ]; then
+    echo "Build successful! Library found at $SCRIPT_DIR/orb_slam3_python.so"
+elif [ -f "orb_slam3_python.so" ]; then
+    # If it's in the build directory, copy it to the bindings directory
     cp orb_slam3_python.so "$SCRIPT_DIR/"
     echo "Build successful! Library copied to $SCRIPT_DIR/orb_slam3_python.so"
 else
     echo "Error: Build failed - library not found"
+    echo "Checked locations:"
+    echo "  - $SCRIPT_DIR/orb_slam3_python.so"
+    echo "  - $BUILD_DIR/orb_slam3_python.so"
     exit 1
 fi
 
