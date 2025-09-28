@@ -1547,9 +1547,6 @@ class MapSaver:
         - 跨平台：在Windows/macOS/Linux正常工作
         """
         try:
-            # 前置验证：确保输入数据有效
-            self._validate_inputs(occupancy_map, map_info, filename)
-            
             print(f"开始保存占用地图: {filename}")
             
             # 保存为不同格式 - 并行执行以提高效率
@@ -1577,8 +1574,6 @@ class MapSaver:
                 
         except Exception as e:
             print(f"✗ 地图保存失败: {e}")
-            # 清理可能的部分文件
-            self._cleanup_partial_files(filename)
             raise
     
     def _save_pgm_format(self, occupancy_map, filename):
@@ -2225,9 +2220,8 @@ class TrajectoryProcessor:
             self._print_processing_summary()
             
         except Exception as e:
-            # 错误处理和资源清理
+            # 错误处理
             print(f"✗ 处理在阶段'{self._current_stage}'中失败: {e}")
-            self._cleanup_resources()
             raise
         finally:
             # 记录处理结束时间
