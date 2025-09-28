@@ -133,6 +133,9 @@ from mpl_toolkits.mplot3d import Axes3D
 import argparse
 import matplotlib.font_manager as fm
 import platform
+import os
+import time
+import traceback
 from scipy.ndimage import binary_dilation, binary_erosion
 from scipy.spatial import ConvexHull
 from skimage.morphology import disk
@@ -1574,40 +1577,56 @@ class MapSaver:
                 
         except Exception as e:
             print(f"✗ 地图保存失败: {e}")
+            traceback.print_exc()
             raise
     
     def _save_pgm_format(self, occupancy_map, filename):
         """保存为PGM格式（ROS标准格式）"""
-        pgm_map = (occupancy_map * 255).astype(np.uint8)
-        # PGM格式：255=空闲，0=障碍物，127=未知
-        pgm_map[occupancy_map == 1.0] = 255  # 空闲 
-        pgm_map[occupancy_map == 0.0] = 0    # 障碍物
-        pgm_map[occupancy_map == 0.5] = 127  # 未知
-        
-        # 翻转Y轴以匹配图像坐标系
-        pgm_map = np.flipud(pgm_map)
-        
-        # 保存PGM文件
-        cv2.imwrite(f"{filename}.pgm", pgm_map)
+        try:
+            pgm_map = (occupancy_map * 255).astype(np.uint8)
+            # PGM格式：255=空闲，0=障碍物，127=未知
+            pgm_map[occupancy_map == 1.0] = 255  # 空闲 
+            pgm_map[occupancy_map == 0.0] = 0    # 障碍物
+            pgm_map[occupancy_map == 0.5] = 127  # 未知
+            
+            # 翻转Y轴以匹配图像坐标系
+            pgm_map = np.flipud(pgm_map)
+            
+            # 保存PGM文件
+            success = cv2.imwrite(f"{filename}.pgm", pgm_map)
+            return success
+        except Exception as e:
+            print(f"  ✗ PGM保存失败: {e}")
+            return False
     
     def _save_yaml_metadata(self, map_info, filename):
         """保存YAML元数据文件（ROS格式）"""
-        yaml_content = f"""image: {filename}.pgm
+        try:
+            yaml_content = f"""image: {filename}.pgm
 resolution: {map_info['resolution']}
 origin: [{map_info['origin_x']}, {map_info['origin_y']}, 0.0]
 negate: 0
 occupied_thresh: 0.65
 free_thresh: 0.196
 """
-        
-        with open(f"{filename}.yaml", 'w') as f:
-            f.write(yaml_content)
+            
+            with open(f"{filename}.yaml", 'w') as f:
+                f.write(yaml_content)
+            return True
+        except Exception as e:
+            print(f"  ✗ YAML保存失败: {e}")
+            return False
     
     def _save_numpy_format(self, occupancy_map, map_info, filename):
         """保存为NumPy格式"""
-        np.savez(f"{filename}.npz", 
-                 occupancy_map=occupancy_map, 
-                 map_info=map_info)
+        try:
+            np.savez(f"{filename}.npz", 
+                     occupancy_map=occupancy_map, 
+                     map_info=map_info)
+            return True
+        except Exception as e:
+            print(f"  ✗ NumPy保存失败: {e}")
+            return False
     
     def _print_save_info(self, filename):
         """打印保存信息"""
@@ -2222,10 +2241,41 @@ class TrajectoryProcessor:
         except Exception as e:
             # 错误处理
             print(f"✗ 处理在阶段'{self._current_stage}'中失败: {e}")
+            traceback.print_exc()
             raise
         finally:
             # 记录处理结束时间
             self._processing_stats['end_time'] = time.time()
+    
+    def _print_processing_summary(self):
+        """打印处理结果总结"""
+        try:
+            print("=" * 60)
+            print("📊 处理结果总结")
+            print("=" * 60)
+            
+            # 处理时间统计
+            if self._processing_stats.get('start_time') and self._processing_stats.get('end_time'):
+                total_time = self._processing_stats['end_time'] - self._processing_stats['start_time']
+                print(f"⏱️  总处理时间: {total_time:.2f} 秒")
+            
+            # 数据统计
+            if 'processed_poses' in self._processing_stats:
+                print(f"📍 处理位姿数量: {self._processing_stats['processed_poses']}")
+            
+            # 地图生成统计
+            if 'generated_maps' in self._processing_stats:
+                print(f"🗺️  生成地图数量: {self._processing_stats['generated_maps']}")
+            
+            # 文件信息
+            print(f"📁 输出目录: {os.getcwd()}")
+            
+            print("=" * 60)
+            print("✅ 处理完成！")
+            print("=" * 60)
+            
+        except Exception as e:
+            print(f"⚠️  总结信息生成失败: {e}")
     
     def _load_trajectory(self, config):
         """加载轨迹数据"""
@@ -2388,13 +2438,13 @@ def main():
         # 处理文件读写错误
         print(f"✗ IO错误: {e}")
         print("  请检查文件权限和磁盘空间")
+        traceback.print_exc()
         return 1
         
     except Exception as e:
         # 处理未预期的错误
         print(f"✗ 程序运行错误: {e}")
         print("  详细错误信息：")
-        import traceback
         traceback.print_exc()
         return 1
     
