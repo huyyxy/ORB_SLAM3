@@ -3,6 +3,7 @@
 #include <opencv2/opencv.hpp>
 #include <iostream>
 #include <vector>
+#include <fstream>
 
 using namespace std;
 
@@ -73,10 +74,36 @@ ORBSLAMSystemHandle* orb_slam3_create_system(
         ORB_SLAM3::System::eSensor sensor = convert_sensor_type(sensor_type);
         bool viewer = (use_viewer != 0);
         
+        cout << "Creating ORB-SLAM3 system with:" << endl;
+        cout << "  Vocabulary file: " << vocab_str << endl;
+        cout << "  Settings file: " << settings_str << endl;
+        cout << "  Sensor type: " << sensor << endl;
+        cout << "  Use viewer: " << (viewer ? "true" : "false") << endl;
+        
+        // 检查文件是否存在
+        ifstream vocab_check(vocab_str);
+        if (!vocab_check.good()) {
+            cerr << "Vocabulary file does not exist or cannot be read: " << vocab_str << endl;
+            return nullptr;
+        }
+        vocab_check.close();
+        
+        ifstream settings_check(settings_str);
+        if (!settings_check.good()) {
+            cerr << "Settings file does not exist or cannot be read: " << settings_str << endl;
+            return nullptr;
+        }
+        settings_check.close();
+        
+        cout << "Files verified, creating system..." << endl;
         ORBSLAMSystemImpl* impl = new ORBSLAMSystemImpl(vocab_str, settings_str, sensor, viewer);
+        cout << "ORB-SLAM3 system created successfully!" << endl;
         return reinterpret_cast<ORBSLAMSystemHandle*>(impl);
     } catch (const exception& e) {
         cerr << "Error creating ORB-SLAM3 system: " << e.what() << endl;
+        return nullptr;
+    } catch (...) {
+        cerr << "Unknown error creating ORB-SLAM3 system" << endl;
         return nullptr;
     }
 }
@@ -375,6 +402,192 @@ void orb_slam3_save_trajectory_kitti(ORBSLAMSystemHandle* system, const char* fi
             string filename_str(filename);
             impl->system->SaveTrajectoryKITTI(filename_str);
         }
+    }
+}
+
+// Helper function to create invalid occupancy map
+OccupancyMap2D create_invalid_occupancy_map() {
+    OccupancyMap2D map;
+    map.data = nullptr;
+    map.width = 0;
+    map.height = 0;
+    map.resolution = 0.0f;
+    map.origin_x = 0.0f;
+    map.origin_y = 0.0f;
+    map.valid = 0;
+    return map;
+}
+
+OccupancyMap2D orb_slam3_generate_occupancy_map(
+    ORBSLAMSystemHandle* system,
+    float resolution,
+    float robot_radius,
+    float height_min,
+    float height_max,
+    float map_extension
+) {
+    if (!system) {
+        return create_invalid_occupancy_map();
+    }
+    
+    try {
+        ORBSLAMSystemImpl* impl = reinterpret_cast<ORBSLAMSystemImpl*>(system);
+        if (!impl->system) {
+            return create_invalid_occupancy_map();
+        }
+        
+        // Get all map points from the system
+        vector<ORB_SLAM3::MapPoint*> all_map_points = impl->system->GetTrackedMapPoints();
+        if (all_map_points.empty()) {
+            cerr << "No map points available for occupancy map generation" << endl;
+            return create_invalid_occupancy_map();
+        }
+        
+        // Filter map points by height and collect 2D positions
+        vector<Eigen::Vector2f> filtered_points;
+        float min_x = FLT_MAX, max_x = -FLT_MAX;
+        float min_y = FLT_MAX, max_y = -FLT_MAX;
+        
+        for (auto* mp : all_map_points) {
+            if (mp && !mp->isBad()) {
+                Eigen::Vector3f pos = mp->GetWorldPos();
+                
+                // Filter by height
+                if (pos.z() >= height_min && pos.z() <= height_max) {
+                    filtered_points.emplace_back(pos.x(), pos.y());
+                    
+                    // Update bounds
+                    min_x = min(min_x, pos.x());
+                    max_x = max(max_x, pos.x());
+                    min_y = min(min_y, pos.y());
+                    max_y = max(max_y, pos.y());
+                }
+            }
+        }
+        
+        if (filtered_points.empty()) {
+            cerr << "No valid map points found in height range [" << height_min 
+                 << ", " << height_max << "]" << endl;
+            return create_invalid_occupancy_map();
+        }
+        
+        // Extend map bounds
+        min_x -= map_extension;
+        max_x += map_extension;
+        min_y -= map_extension;
+        max_y += map_extension;
+        
+        // Calculate map dimensions
+        int width = static_cast<int>(ceil((max_x - min_x) / resolution));
+        int height = static_cast<int>(ceil((max_y - min_y) / resolution));
+        
+        if (width <= 0 || height <= 0 || width > 10000 || height > 10000) {
+            cerr << "Invalid map dimensions: " << width << "x" << height << endl;
+            return create_invalid_occupancy_map();
+        }
+        
+        // Initialize occupancy map with unknown values (127)
+        unsigned char* map_data = new unsigned char[width * height];
+        memset(map_data, 127, width * height); // Unknown = 127
+        
+        // Mark observed points as free (255)
+        for (const auto& point : filtered_points) {
+            int px = static_cast<int>((point.x() - min_x) / resolution);
+            int py = static_cast<int>((point.y() - min_y) / resolution);
+            
+            // Ensure within bounds
+            if (px >= 0 && px < width && py >= 0 && py < height) {
+                map_data[py * width + px] = 255; // Free space
+            }
+        }
+        
+        // Apply robot radius inflation (mark areas around obstacles)
+        if (robot_radius > 0) {
+            int inflation_pixels = static_cast<int>(ceil(robot_radius / resolution));
+            unsigned char* temp_map = new unsigned char[width * height];
+            memcpy(temp_map, map_data, width * height);
+            
+            for (int y = 0; y < height; y++) {
+                for (int x = 0; x < width; x++) {
+                    if (temp_map[y * width + x] == 0) { // If occupied
+                        // Inflate around this pixel
+                        for (int dy = -inflation_pixels; dy <= inflation_pixels; dy++) {
+                            for (int dx = -inflation_pixels; dx <= inflation_pixels; dx++) {
+                                int nx = x + dx;
+                                int ny = y + dy;
+                                
+                                if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+                                    float dist = sqrt(dx*dx + dy*dy) * resolution;
+                                    if (dist <= robot_radius) {
+                                        map_data[ny * width + nx] = 0; // Occupied
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            delete[] temp_map;
+        }
+        
+        // Simple obstacle inference: areas between free spaces that weren't observed
+        // This is a basic implementation - could be improved with ray tracing
+        for (int y = 1; y < height - 1; y++) {
+            for (int x = 1; x < width - 1; x++) {
+                if (map_data[y * width + x] == 127) { // Unknown
+                    // Check if surrounded by free space - might be obstacle
+                    int free_neighbors = 0;
+                    int total_neighbors = 0;
+                    
+                    for (int dy = -1; dy <= 1; dy++) {
+                        for (int dx = -1; dx <= 1; dx++) {
+                            if (dx == 0 && dy == 0) continue;
+                            
+                            int nx = x + dx;
+                            int ny = y + dy;
+                            if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+                                total_neighbors++;
+                                if (map_data[ny * width + nx] == 255) {
+                                    free_neighbors++;
+                                }
+                            }
+                        }
+                    }
+                    
+                    // If mostly surrounded by free space, likely an obstacle
+                    if (total_neighbors > 0 && free_neighbors >= total_neighbors * 0.6) {
+                        map_data[y * width + x] = 0; // Mark as occupied
+                    }
+                }
+            }
+        }
+        
+        // Create result structure
+        OccupancyMap2D result;
+        result.data = map_data;
+        result.width = width;
+        result.height = height;
+        result.resolution = resolution;
+        result.origin_x = min_x;
+        result.origin_y = min_y;
+        result.valid = 1;
+        
+        cout << "Generated occupancy map: " << width << "x" << height 
+             << " pixels, resolution: " << resolution << " m/pixel" << endl;
+        
+        return result;
+        
+    } catch (const exception& e) {
+        cerr << "Error generating occupancy map: " << e.what() << endl;
+        return create_invalid_occupancy_map();
+    }
+}
+
+void orb_slam3_free_occupancy_map(OccupancyMap2D* occupancy_map) {
+    if (occupancy_map && occupancy_map->data) {
+        delete[] occupancy_map->data;
+        occupancy_map->data = nullptr;
+        occupancy_map->valid = 0;
     }
 }
 

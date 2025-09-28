@@ -58,6 +58,17 @@ typedef struct {
     int num_keypoints;
 } TrackedKeyPoints;
 
+// 2D Occupancy Map structure
+typedef struct {
+    unsigned char* data;  // Occupancy map data (0=occupied, 255=free, 127=unknown)
+    int width;           // Map width in pixels
+    int height;          // Map height in pixels
+    float resolution;    // Resolution in meters per pixel
+    float origin_x;      // Origin X coordinate in meters
+    float origin_y;      // Origin Y coordinate in meters
+    int valid;          // 1 if map is valid, 0 otherwise
+} OccupancyMap2D;
+
 // System management functions
 ORBSLAMSystemHandle* orb_slam3_create_system(
     const char* vocab_file,
@@ -111,6 +122,7 @@ MapPoints orb_slam3_get_all_map_points(ORBSLAMSystemHandle* system);
 // Memory management for returned data
 void orb_slam3_free_map_points(MapPoints* map_points);
 void orb_slam3_free_keypoints(TrackedKeyPoints* keypoints);
+void orb_slam3_free_occupancy_map(OccupancyMap2D* occupancy_map);
 
 // Mode control functions
 void orb_slam3_activate_localization_mode(ORBSLAMSystemHandle* system);
@@ -120,6 +132,16 @@ void orb_slam3_reset(ORBSLAMSystemHandle* system);
 // Save functions
 void orb_slam3_save_trajectory_tum(ORBSLAMSystemHandle* system, const char* filename);
 void orb_slam3_save_trajectory_kitti(ORBSLAMSystemHandle* system, const char* filename);
+
+// Occupancy map generation functions
+OccupancyMap2D orb_slam3_generate_occupancy_map(
+    ORBSLAMSystemHandle* system,
+    float resolution,        // Resolution in meters per pixel
+    float robot_radius,      // Robot radius in meters for inflation
+    float height_min,        // Minimum height threshold in meters
+    float height_max,        // Maximum height threshold in meters
+    float map_extension      // Map boundary extension in meters
+);
 
 #ifdef __cplusplus
 }

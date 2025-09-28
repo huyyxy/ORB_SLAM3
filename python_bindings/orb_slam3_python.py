@@ -20,7 +20,7 @@ ORB-SLAM3是一个实时的SLAM（同时定位与地图构建）系统，支持�
 # 导入必要的Python标准库和第三方库
 import ctypes          # 用于与C/C++代码交互的Python标准库
 import numpy as np     # 数值计算库，用于处理图像和数组数据
-from ctypes import Structure, POINTER, c_void_p, c_char_p, c_int, c_float, c_double  # ctypes数据类型
+from ctypes import Structure, POINTER, c_void_p, c_char_p, c_int, c_float, c_double, c_ubyte  # ctypes数据类型
 import os             # 操作系统接口，用于文件路径操作
 import sys            # 系统相关参数和函数
 from enum import IntEnum  # 用于创建整数枚举类型
@@ -265,6 +265,50 @@ class TrackedKeyPoints(Structure):
         ("num_keypoints", c_int)             # 数组中关键点的数量
     ]
 
+class OccupancyMap2D(Structure):
+    """
+    2D占用地图数据结构
+    
+    从3D SLAM地图点生成的2D导航地图，用于机器人路径规划和环境理解。
+    占用地图将3D环境投影到2D平面，标记哪些区域可以安全通行。
+    
+    地图编码说明：
+    - 0 (黑色): 占用区域/障碍物 - 机器人不能通过
+    - 255 (白色): 空闲区域 - 机器人可以安全通过  
+    - 127 (灰色): 未知区域 - 没有足够信息确定状态
+    
+    生成过程：
+    1. 从ORB-SLAM3获取3D地图点
+    2. 按高度阈值过滤点云（如地面附近）
+    3. 投影到2D平面并栅格化
+    4. 应用机器人半径膨胀
+    5. 推断障碍物位置
+    
+    应用场景：
+    - 机器人导航路径规划
+    - 环境地图可视化
+    - 与ROS导航栈集成
+    - 自主移动机器人SLAM
+    
+    字段说明：
+        data: 占用地图像素数据的指针
+        width: 地图宽度（像素）
+        height: 地图高度（像素）
+        resolution: 分辨率（米/像素）
+        origin_x: 地图原点X坐标（米）
+        origin_y: 地图原点Y坐标（米）
+        valid: 地图是否有效（1=有效，0=无效）
+    """
+    _fields_ = [
+        ("data", POINTER(c_ubyte)),  # 占用地图数据指针
+        ("width", c_int),            # 地图宽度（像素）
+        ("height", c_int),           # 地图高度（像素）
+        ("resolution", c_float),     # 分辨率（米/像素）
+        ("origin_x", c_float),       # 原点X坐标（米）
+        ("origin_y", c_float),       # 原点Y坐标（米）
+        ("valid", c_int)             # 地图有效性标志
+    ]
+
 # ============================================================================
 # 第四部分：函数签名设置
 # ============================================================================
@@ -444,6 +488,27 @@ def setup_function_signatures():
     # KITTI格式：12个元素的变换矩阵（3x4）
     _lib.orb_slam3_save_trajectory_kitti.argtypes = [c_void_p, c_char_p]
     _lib.orb_slam3_save_trajectory_kitti.restype = None
+    
+    # ========== 占用地图生成函数 ==========
+    
+    # 生成2D占用地图
+    # 参数：系统句柄、分辨率、机器人半径、高度范围、地图扩展
+    # 返回：OccupancyMap2D结构体
+    _lib.orb_slam3_generate_occupancy_map.argtypes = [
+        c_void_p,    # system handle
+        c_float,     # resolution
+        c_float,     # robot_radius
+        c_float,     # height_min
+        c_float,     # height_max
+        c_float      # map_extension
+    ]
+    _lib.orb_slam3_generate_occupancy_map.restype = OccupancyMap2D
+    
+    # 释放占用地图内存
+    # 参数：占用地图结构体指针
+    # 返回：无
+    _lib.orb_slam3_free_occupancy_map.argtypes = [POINTER(OccupancyMap2D)]
+    _lib.orb_slam3_free_occupancy_map.restype = None
 
 # 调用函数签名设置，完成ctypes绑定初始化
 setup_function_signatures()
@@ -1215,6 +1280,157 @@ class ORBSLAMSystem:
         if self._system_handle:
             filename_bytes = filename.encode('utf-8')
             _lib.orb_slam3_save_trajectory_kitti(self._system_handle, filename_bytes)
+    
+    def generate_occupancy_map(self, resolution=0.05, robot_radius=0.3, 
+                              height_min=-0.5, height_max=2.0, map_extension=2.0):
+        """
+        生成2D占用地图（C++实现版本）
+        
+        从SLAM系统的3D地图点直接生成2D占用地图，比Python实现更高效准确。
+        这是基于C++底层实现的版本，直接利用ORB-SLAM3的3D地图数据。
+        
+        算法原理：
+        1. **3D点云获取**：从ORB-SLAM3系统获取所有3D地图点
+        2. **高度过滤**：只考虑指定高度范围内的点（通常是地面附近）
+        3. **2D投影**：将3D点投影到XY平面，生成2D占用栅格
+        4. **空间分析**：基于观测点推断空闲区域和障碍物位置
+        5. **半径膨胀**：考虑机器人尺寸，膨胀障碍物区域
+        
+        与Python版本对比：
+        - **数据源**：直接使用3D地图点 vs 轨迹位姿
+        - **精度**：基于实际观测 vs 路径推断  
+        - **性能**：C++原生实现 vs Python后处理
+        - **实时性**：可实时生成 vs 批量处理
+        
+        地图编码标准：
+        - **0 (黑色)**：占用区域/障碍物 - 机器人不可通过
+        - **255 (白色)**：空闲区域 - 机器人可安全通过
+        - **127 (灰色)**：未知区域 - 缺乏观测数据
+        
+        参数说明：
+            resolution (float): 地图分辨率，单位：米/像素
+                - 默认0.05，即每像素代表5厘米
+                - 值越小地图越精细，但内存消耗越大
+                - 建议范围：0.01-0.2米
+                
+            robot_radius (float): 机器人半径，单位：米
+                - 用于障碍物膨胀，确保安全距离
+                - 考虑机器人的实际物理尺寸
+                - 默认0.3米，适合中型移动机器人
+                
+            height_min (float): 最低高度阈值，单位：米
+                - 过滤掉低于此高度的地图点
+                - 默认-0.5米，排除地面以下的噪声点
+                
+            height_max (float): 最高高度阈值，单位：米  
+                - 过滤掉高于此高度的地图点
+                - 默认2.0米，只考虑机器人导航相关的高度
+                
+            map_extension (float): 地图边界扩展，单位：米
+                - 在观测区域外围扩展的距离
+                - 默认2.0米，提供足够的规划空间
+        
+        返回值：
+            tuple: (occupancy_map, map_info) 或 None
+                occupancy_map (numpy.ndarray): 2D占用地图数组
+                    - 形状：(height, width)
+                    - 数据类型：uint8
+                    - 值含义：0=占用, 255=空闲, 127=未知
+                    
+                map_info (dict): 地图元信息字典
+                    - 'width': 地图宽度（像素）
+                    - 'height': 地图高度（像素）  
+                    - 'resolution': 分辨率（米/像素）
+                    - 'origin_x': 原点X坐标（米）
+                    - 'origin_y': 原点Y坐标（米）
+        
+        异常情况：
+            - 如果系统未初始化或无地图数据，返回None
+            - 如果参数不合理（如负分辨率），返回None
+            - 如果内存不足，返回None
+        
+        应用示例：
+            # 基本使用
+            result = slam.generate_occupancy_map()
+            if result:
+                occupancy_map, map_info = result
+                print(f"地图尺寸: {map_info['width']}x{map_info['height']}")
+                
+            # 高精度地图
+            result = slam.generate_occupancy_map(
+                resolution=0.02,      # 2厘米精度
+                robot_radius=0.25,    # 25厘米机器人
+                height_min=0.0,       # 地面以上
+                height_max=1.5        # 1.5米以下
+            )
+            
+            # 大范围环境
+            result = slam.generate_occupancy_map(
+                resolution=0.1,       # 10厘米精度  
+                map_extension=5.0     # 扩展5米边界
+            )
+        
+        集成建议：
+        1. **实时应用**：每隔几秒调用一次，保持地图更新
+        2. **内存管理**：及时释放不需要的地图数据
+        3. **参数调优**：根据环境特点调整高度范围
+        4. **与ROS集成**：可直接发布为nav_msgs/OccupancyGrid消息
+        """
+        if not self._system_handle:
+            print("SLAM系统未初始化")
+            return None
+            
+        try:
+            # 调用C++实现的占用地图生成函数
+            occupancy_map_c = _lib.orb_slam3_generate_occupancy_map(
+                self._system_handle,
+                c_float(resolution),
+                c_float(robot_radius), 
+                c_float(height_min),
+                c_float(height_max),
+                c_float(map_extension)
+            )
+            
+            # 检查返回的地图是否有效
+            if not occupancy_map_c.valid:
+                print("占用地图生成失败")
+                return None
+                
+            # 将C数据转换为NumPy数组
+            if occupancy_map_c.data and occupancy_map_c.width > 0 and occupancy_map_c.height > 0:
+                # 创建NumPy数组并复制数据
+                map_size = occupancy_map_c.width * occupancy_map_c.height
+                occupancy_array = np.zeros((occupancy_map_c.height, occupancy_map_c.width), dtype=np.uint8)
+                
+                # 从C指针复制数据到NumPy数组
+                for i in range(map_size):
+                    row = i // occupancy_map_c.width
+                    col = i % occupancy_map_c.width
+                    occupancy_array[row, col] = occupancy_map_c.data[i]
+                
+                # 创建地图元信息字典
+                map_info = {
+                    'width': occupancy_map_c.width,
+                    'height': occupancy_map_c.height,
+                    'resolution': occupancy_map_c.resolution,
+                    'origin_x': occupancy_map_c.origin_x,
+                    'origin_y': occupancy_map_c.origin_y
+                }
+                
+                # 释放C++分配的内存
+                _lib.orb_slam3_free_occupancy_map(ctypes.byref(occupancy_map_c))
+                
+                print(f"成功生成占用地图: {map_info['width']}x{map_info['height']} "
+                      f"像素, 分辨率: {map_info['resolution']:.3f} 米/像素")
+                
+                return occupancy_array, map_info
+            else:
+                print("占用地图数据无效")
+                return None
+                
+        except Exception as e:
+            print(f"生成占用地图时发生错误: {e}")
+            return None
 
 # ============================================================================
 # 文件结束：教学级注释完成
